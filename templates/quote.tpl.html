@@ -1,0 +1,11 @@
+<html>
+	<head>
+		<title>{$dbresult.username|escape:'htmlall'}'s Quote on Pulpit</title>
+		<link rel="stylesheet" href="style/style.css" type="text/css" media="screen" charset="utf-8"/>
+	</head>
+	<body>
+		<h1>{$dbresult.content|escape:'htmlall'}</h1>
+		<img src="{$pathtoimg}" alt="" />
+		<h3>by {$dbresult.username|escape:'htmlall'}</h3>
+	</body>
+</html>
