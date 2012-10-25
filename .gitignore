@@ -1,0 +1,5 @@
+smarty/templates_c
+smarty/cache
+backend/uploads
+db/database.db3
+.project
