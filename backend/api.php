@@ -21,6 +21,9 @@ switch ($_POST['method']) {
 	case 'user.register' :
 		sendResult(registerApi());
 		break;
+	case 'user.facebook' :
+		sendResult(fbUserApi());
+		break;
 	case 'quote.create' :
 		sendResult(createQuoteApi());
 		break;
@@ -79,6 +82,85 @@ function loginApi() {
 	$_SESSION['sessionhash'] = sha1(md5($dbresult['id']));
 	
 	return array("stat" => "ok", "message" => "Login successful", "username" => $dbresult['username'], "uid" => $dbresult['id'], "token" => $token);
+}
+
+function fbUserApi() {
+	if (!isset($_POST['fbid']) or !isset($_POST['fbtoken'])) {
+		return array("stat" => "fail", "message" => "FB id, FB token and email must be provided");
+	}
+
+	$dbresult = dbQueryRow('SELECT username, id, fbid FROM users WHERE fbid = ?', array($_POST['fbid']));
+	$token = verifyFbToken($_POST['fbtoken']);
+	if (!$token) {
+		return array("stat" => "fail", "message" => "Could not verify Facebook user with Facebook.");
+	}
+	
+	if (!$dbresult) {
+		return registerFbUser($token);
+	} else {
+		return loginFbUser($dbresult, $token);
+	}
+}
+
+function registerFbUser($token) {
+	$user = json_decode(file_get_contents("https://graph.facebook.com/me?access_token=" . $token));
+	$pulpittoken = md5(time() . $token . $_POST['fbid']);
+	$statement = "
+				INSERT INTO users 
+				(email, username, fbtoken, fbid, token) VALUES
+				(?, ?, ?, ?, ?)
+			";
+	$arr = array($user->email, str_replace(" ", "", $user->name), $token, $_POST['fbid'], $pulpittoken);
+	try {
+		$result = dbExec($statement, $arr);
+	} catch (Exception $e) {
+		$result = false;
+	}
+
+
+	if ($result) {
+		$result = dbQueryRow('SELECT username,id FROM users WHERE fbid = ?', array($_POST['fbid']));
+		session_id(md5(sha1($result['id'])));
+		session_start();
+		$_SESSION['sessionhash'] = sha1(md5($result['id']));
+		return array("stat" => "ok", "message" => "User " . $username . " registered", "username" => $result['username'], "fbtoken" => $token, "uid" => $result['id'], "token" => $pulpittoken);
+	} else {
+		return array("stat" => "fail", "message" => "User could not be registered: " . $e -> getMessage());
+	}
+}
+
+function loginFbUser($dbresult, $token) {
+	$pulpittoken = md5(time() . $token . $_POST['fbid']);
+	$statement = "
+			UPDATE users 
+			SET fbtoken = ?, token = ?
+			WHERE id = ?
+		";
+	$arr = array($token, $pulpittoken, $dbresult['id']);
+	try {
+		$result = dbExec($statement, $arr);
+	} catch (Exception $e) {
+		$result = false;
+	}
+	
+	session_id(md5(sha1($dbresult['id'])));
+	session_start();
+	$_SESSION['sessionhash'] = sha1(md5($dbresult['id']));
+	
+	return array("stat" => "ok", "message" => "Facebook login successful", "username" => $dbresult['username'], "uid" => $dbresult['id'], "fbtoken" => $token, "fbid" => $_POST['fbid'], "token" => $pulpittoken);
+}
+
+function verifyFbToken($token) {
+	$token_url = "https://graph.facebook.com/oauth/access_token?grant_type=fb_exchange_token&"
+       . "client_id=514501168566195&client_secret=c89f7623a498ce1a7e76087759011fad&fb_exchange_token=" . $token;
+    $response = file_get_contents($token_url);
+	$params = null;
+    parse_str($response, $params);
+	if ($params['access_token'] AND $params['expires'] > 0) {
+		return $params['access_token'];
+	} else {
+		return false;
+	}
 }
 
 function registerApi() {
