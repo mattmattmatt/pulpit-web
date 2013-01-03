@@ -2,6 +2,7 @@
 
 include_once '../_globals.php';
 include_once '../dbwrapper.php';
+include_once './imagestuff.php';
 
 header("access-control-allow-origin: *");
 
@@ -26,6 +27,9 @@ switch ($_POST['method']) {
 		break;
 	case 'quote.create' :
 		sendResult(createQuoteApi());
+		break;
+	case 'quote.shared.fb' :
+		sendResult(saveSharedFb());
 		break;
 	default:
 		noLuck();
@@ -163,6 +167,37 @@ function verifyFbToken($token) {
 	}
 }
 
+
+function saveSharedFb() {
+	if (!isset($_POST['uid']) or !isset($_POST['postid']) or !isset($_POST['photoid']) or !isset($_POST['qid'])) {
+		return array("stat" => "fail", "message" => "Uid, postid, photoid and qid must be provided");
+	}
+	
+	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
+		return array("stat" => "fail", "message" => "Token or session hash invalid");
+	}
+	
+	$statement = "
+				INSERT INTO fbposts
+				(qid, photoid, postid) VALUES
+				(?, ?, ?)
+			";
+	$arr = array($_POST['qid'], $_POST['photoid'], $_POST['postid']);
+	try {
+		$result = dbExec($statement, $arr);
+	} catch (Exception $e) {
+		$result = false;
+	}
+
+
+	if ($result) {
+		return array("stat" => "ok", "message" => "Quote share on FB saved in db.");
+	} else {
+		return array("stat" => "fail", "message" => "Quote share on FB could not be saved: " . $e -> getMessage());
+	}
+}
+
+
 function registerApi() {
 	if (!isset($_POST['username']) or !isset($_POST['password']) or !isset($_POST['email'])) {
 		return array("stat" => "fail", "message" => "Username, password and email must be provided");
@@ -244,13 +279,24 @@ function createQuoteApi() {
 	if ($result === false) {
 		return array("stat" => "fail", "message" => "Quote could not be saved.");
 	}
+	
+	$image = new SimpleImage();
+	$image->load(ROOTLOCAL . $path . $filename);
+	$originalWidth = $image->getWidth();
+	$originalHeight = $image->getHeight();
+	
+	// maximum Facebook wall post width
+	$image->resizeToWidth(403);
+	
+	$fbfilename = $_POST['template'] . '-' . time() . '-fb' . '.' . $extension;
+	$image->save(ROOTLOCAL . $path . $fbfilename, IMAGETYPE_PNG);
 
 	$statement = "
 				INSERT INTO quotes 
-				(uid, template, path, content) VALUES
-				(?, ?, ?, ?)
+				(uid, template, path, content, width, height, fbpath, fbwidth, fbheight) VALUES
+				(?, ?, ?, ?, ?, ?, ?, ?, ?)
 			";
-	$arr = array($_POST['uid'], $_POST['template'], $path . $filename, $_POST['content']);
+	$arr = array($_POST['uid'], $_POST['template'], $path . $filename, $_POST['content'], $originalWidth, $originalHeight, $path . $fbfilename, $image->getWidth(), $image->getHeight());
 	try {
 		$result = dbExec($statement, $arr);
 	} catch (Exception $e) {
@@ -258,7 +304,7 @@ function createQuoteApi() {
 	}
 
 	if ($result) {
-		return array("stat" => "ok", "message" => "Quote successfully saved", "filename" => ROOTWEB . $path . $filename, "url" => ROOTWEB . 'quote.php?q=' . dblastId());
+		return array("stat" => "ok", "message" => "Quote successfully saved", "filename" => ROOTWEB . $path . $filename, "url" => ROOTWEB . 'quote.php?q=' . dblastId(), "fbfilename" => ROOTWEB . $path . $fbfilename, "qid" => dblastId());
 	} else {
 		return array("stat" => "fail", "message" => "Quote could not be registered: " . $e -> getMessage());
 	}
@@ -287,4 +333,6 @@ function sendResult($object, $callbackname = false) {
 		echo json_encode($object);
 	}
 }
-?>
+
+
+
