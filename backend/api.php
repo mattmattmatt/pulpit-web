@@ -5,6 +5,7 @@ include_once '../dbwrapper.php';
 include_once './imagestuff.php';
 
 header("access-control-allow-origin: *");
+header('content-type: application/json; charset=utf-8');
 
 function noLuck() {
 	echo "Go away.";
@@ -16,14 +17,11 @@ if (!isset($_POST['method'])) {
 }
 
 switch ($_POST['method']) {
-	case 'user.login' :
-		sendResult(loginApi());
+	case 'user.facebook.register' :
+		sendResult(fbUserApi(FALSE));
 		break;
-	case 'user.register' :
-		sendResult(registerApi());
-		break;
-	case 'user.facebook' :
-		sendResult(fbUserApi());
+	case 'user.facebook.login' :
+		sendResult(fbUserApi(TRUE));
 		break;
 	case 'quote.create' :
 		sendResult(createQuoteApi());
@@ -31,127 +29,85 @@ switch ($_POST['method']) {
 	case 'quote.shared.fb' :
 		sendResult(saveSharedFb());
 		break;
+	case 'quotes.get.user' :
+		sendResult(getQuotesFromUser());
+		break;
 	default:
 		noLuck();
 		return;
 }
 
-function loginApi() {
-	if (!isset($_POST['password']) or !isset($_POST['email'])) {
-		return array("stat" => "fail", "message" => "Password and email must be provided");
-	}
 
-	$password = $_POST['password'];
-	$email = strtolower($_POST['email']);
-
-	if (!preg_match("/^.{8,}$/", $password)) {
-		return array("stat" => "fail", "message" => "Password must be at least 8 characters long");
-	}
-
-	if (!preg_match("/^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/", $email)) {
-		return array("stat" => "fail", "message" => "Email invalid");
-	}
-
-	$dbresult = dbQueryRow('SELECT passwordhash, username, id FROM users WHERE email = ?', array($email));
-	if (!$dbresult) {
-		return array("stat" => "fail", "message" => "Login failed, email not found");
-	}
-
-	$arr = explode('@', $dbresult['passwordhash']);
-	$salt = $arr[0];
-	$hash = $arr[1];
-
-	$checkableHash = crypt($password, '$6$rounds=5000$' . $salt . '$');
-
-	if ($checkableHash !== $hash) {
-		return array("stat" => "fail", "message" => "Login failed, wrong password");
-	}
-	
-	$token = md5(time() . $checkableHash . $dbresult['id']);
-	
-	$statement = "
-				UPDATE users 
-				SET token = ?
-				WHERE id = ?
-			";
-	$arr = array($token, $dbresult['id']);
-	try {
-		$result = dbExec($statement, $arr);
-	} catch (Exception $e) {
-		$result = false;
-	}
-	
-	session_id(md5(sha1($dbresult['id'])));
-	session_start();
-	$_SESSION['sessionhash'] = sha1(md5($dbresult['id']));
-	
-	return array("stat" => "ok", "message" => "Login successful", "username" => $dbresult['username'], "uid" => $dbresult['id'], "token" => $token);
-}
-
-function fbUserApi() {
+function fbUserApi($dontRegister) {
 	if (!isset($_POST['fbid']) or !isset($_POST['fbtoken'])) {
 		return array("stat" => "fail", "message" => "FB id, FB token and email must be provided");
 	}
 
 	$dbresult = dbQueryRow('SELECT username, id, fbid FROM users WHERE fbid = ?', array($_POST['fbid']));
-	$token = verifyFbToken($_POST['fbtoken']);
-	if (!$token) {
+	if (!$dbresult && $dontRegister) {
+		return array("stat" => "fail", "message" => "Facebook user not registered for Pulpit.");
+	}
+	
+	$fbtoken = verifyFbToken($_POST['fbtoken']);
+	if (!$fbtoken) {
 		return array("stat" => "fail", "message" => "Could not verify Facebook user with Facebook.");
 	}
 	
-	if (!$dbresult) {
-		return registerFbUser($token);
+	if (!is_array($dbresult)) {
+		return registerFbUser($fbtoken);
 	} else {
-		return loginFbUser($dbresult, $token);
+		return loginFbUser($dbresult['id'], $dbresult['username'], $fbtoken);
 	}
 }
 
-function registerFbUser($token) {
-	$user = json_decode(file_get_contents("https://graph.facebook.com/me?access_token=" . $token));
-	$pulpittoken = md5(time() . $token . $_POST['fbid']);
+function registerFbUser($fbtoken) {
+	$fbUserResult = json_decode(file_get_contents("https://graph.facebook.com/me?access_token=" . $fbtoken));
+	$username = $fbUserResult->name;
 	$statement = "
 				INSERT INTO users 
-				(email, username, fbtoken, fbid, token) VALUES
-				(?, ?, ?, ?, ?)
+				(email, username, fbtoken, fbid) VALUES
+				(?, ?, ?, ?)
 			";
-	$arr = array($user->email, str_replace(" ", "", $user->name), $token, $_POST['fbid'], $pulpittoken);
+	$arr = array($fbUserResult->email, $username, $fbtoken, $_POST['fbid']);
 	try {
 		$result = dbExec($statement, $arr);
 	} catch (Exception $e) {
-		$result = false;
+		$result = FALSE;
 	}
+	$uid = dblastId();
 
-
-	if ($result) {
-		$result = dbQueryRow('SELECT username,id FROM users WHERE fbid = ?', array($_POST['fbid']));
-		session_id(md5(sha1($result['id'])));
-		session_start();
-		$_SESSION['sessionhash'] = sha1(md5($result['id']));
-		return array("stat" => "ok", "message" => "User " . $username . " registered", "username" => $result['username'], "fbtoken" => $token, "uid" => $result['id'], "token" => $pulpittoken);
+	if ($result !== FALSE) {
+		$logInResult = loginFbUser($uid, $username, $fbtoken);
+		if ($logInResult->stat === "ok") {
+			return array("stat" => "ok", "message" => "User " . $username . " registered", "username" => $username, "fbtoken" => $fbtoken, "uid" => $uid, "token" => $pulpittoken);
+		} else {
+			return $logInResult;
+		}
 	} else {
 		return array("stat" => "fail", "message" => "User could not be registered: " . $e -> getMessage());
 	}
 }
 
-function loginFbUser($dbresult, $token) {
-	$pulpittoken = md5(time() . $token . $_POST['fbid']);
+function loginFbUser($uid, $username, $fbtoken) {
+	$pulpittoken = md5(time() . $fbtoken . $_POST['fbid']);
 	$statement = "
 			UPDATE users 
-			SET fbtoken = ?, token = ?
+			SET fbtoken = ?, token = ?, date_lastlogin = datetime('now'), date_tokenexpire = datetime('now', '+7 days')
 			WHERE id = ?
 		";
-	$arr = array($token, $pulpittoken, $dbresult['id']);
+	$arr = array($fbtoken, $pulpittoken, $uid);
 	try {
 		$result = dbExec($statement, $arr);
 	} catch (Exception $e) {
 		$result = false;
+		return array("stat" => "fail", "message" => "Facebook login failed: " . $e->getMessage());
 	}
 	
-	session_id(md5(sha1($dbresult['id'])));
+	session_id(md5(sha1($uid)));
 	session_start();
-	$_SESSION['sessionhash'] = sha1(md5($dbresult['id']));
+	$_SESSION['sessionhash'] = sha1(md5($uid));
 	
-	return array("stat" => "ok", "message" => "Facebook login successful", "username" => $dbresult['username'], "uid" => $dbresult['id'], "fbtoken" => $token, "fbid" => $_POST['fbid'], "token" => $pulpittoken);
+	return array("stat" => "ok", "message" => "Facebook login successful", "username" => $username, "uid" => $uid, "fbtoken" => $fbtoken, "fbid" => $_POST['fbid'], "token" => $pulpittoken);
 }
 
 function verifyFbToken($token) {
@@ -197,56 +153,6 @@ function saveSharedFb() {
 	}
 }
 
-
-function registerApi() {
-	if (!isset($_POST['username']) or !isset($_POST['password']) or !isset($_POST['email'])) {
-		return array("stat" => "fail", "message" => "Username, password and email must be provided");
-	}
-
-	$username = $_POST['username'];
-	$password = $_POST['password'];
-	$email = strtolower($_POST['email']);
-
-	if (!preg_match("/^.{8,}$/", $password)) {
-		return array("stat" => "fail", "message" => "Password must be at least 8 characters long");
-	}
-
-	if (!preg_match("/^[a-z0-9_]{4,}$/i", $username)) {
-		return array("stat" => "fail", "message" => "Username invalid");
-	}
-
-	if (!preg_match("/^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/", $email)) {
-		return array("stat" => "fail", "message" => "Email invalid");
-	}
-
-	$salt = "";
-	for ($i = 0; $i < 22; $i++) {
-		$salt .= substr("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", mt_rand(0, 63), 1);
-	}
-
-	$hash = crypt($password, '$6$rounds=5000$' . $salt . '$');
-	$hashToSafe = $salt . '@' . $hash;
-
-	$statement = "
-				INSERT INTO users 
-				(email, username, passwordhash) VALUES
-				(?, ?, ?)
-			";
-	$arr = array($email, $username, $hashToSafe);
-	try {
-		$result = dbExec($statement, $arr);
-	} catch (Exception $e) {
-		$result = false;
-	}
-
-	$uid = dbQueryValue('SELECT id FROM users WHERE email = ?', array($email));
-
-	if ($result) {
-		return array("stat" => "ok", "message" => "User " . $username . " registered", "username" => $username, "uid" => $uid);
-	} else {
-		return array("stat" => "fail", "message" => "User could not be registered: " . $e -> getMessage());
-	}
-}
 
 function createQuoteApi() {
 	if (!isset($_POST['image']) or !isset($_POST['uid']) or !isset($_POST['template']) or !isset($_POST['content']) or !isset($_POST['token'])) {
@@ -310,6 +216,24 @@ function createQuoteApi() {
 	}
 }
 
+function getQuotesFromUser() {
+	if (!isset($_POST['ownerid']) or $_POST['ownerid'] !== $_POST['uid']) {
+		return array("stat" => "fail", "message" => "Ownerid must be provided and identical with logged in user.");
+	}
+	
+	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
+		return array("stat" => "fail", "message" => "Token or session hash invalid");
+	}
+	
+	$result = dbQueryAll('SELECT * FROM quotes WHERE uid = ?', array($_POST['ownerid']));
+
+	if ($result) {
+		return array("stat" => "ok", "result" => $result);
+	} else {
+		return array("stat" => "fail", "message" => "No quotes could be loaded.");
+	}
+}
+
 function checkUserToken($id, $token) {
 	return dbQueryValue('SELECT id FROM users WHERE id = ? AND token = ?', array($id, $token));
 }
@@ -326,7 +250,6 @@ function checkUserSession($id) {
 }
 
 function sendResult($object, $callbackname = false) {
-	header('content-type: application/json; charset=utf-8');
 	if ($callbackname) {
 		echo $callbackname . '(' . json_encode($object) . ')';
 	} else {
