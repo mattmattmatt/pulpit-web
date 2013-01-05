@@ -17,6 +17,12 @@ if (!isset($_POST['method'])) {
 }
 
 switch ($_POST['method']) {
+	case 'user.edit.delete' :
+		sendResult(deleteUser());
+		break;
+	case 'user.edit.update' :
+		sendResult(updateUser());
+		break;
 	case 'user.facebook.register' :
 		sendResult(fbUserApi(FALSE));
 		break;
@@ -232,6 +238,54 @@ function getQuotesFromUser() {
 	} else {
 		return array("stat" => "fail", "message" => "No quotes could be loaded.");
 	}
+}
+
+function updateUser() {
+	if (!isset($_POST['username'])) {
+		return array("stat" => "fail", "message" => "Username must be provided.");
+	}
+	
+	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
+		return array("stat" => "fail", "message" => "Token or session hash invalid");
+	}
+	
+	try {
+		$result = dbExec("UPDATE users SET username = ? WHERE id = ?", array(strip_tags($_POST['username']), $_POST['uid']));
+	} catch (Exception $e) {
+		return array("stat" => "fail", "message" => "Could not update user: " . $e->getMessage());
+	}
+	
+	return array("stat" => "ok", "message" => "User update successful", "username" => strip_tags($_POST['username']));
+}
+
+function deleteUser() {
+	if (!isset($_POST['uid'])) {
+		return array("stat" => "fail", "message" => "Ownerid must be provided and identical with logged in user.");
+	}
+	
+	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
+		return array("stat" => "fail", "message" => "Token or session hash invalid");
+	}
+	
+	try {
+		$result = dbExec("DELETE FROM users WHERE id = ?", array($_POST['uid']));
+	} catch (Exception $e) {
+		$result = false;
+	}
+	if ($result) {
+		try {
+			$result = dbExec("DELETE FROM quotes WHERE uid = ?", array($_POST['uid']));
+		} catch (Exception $e) {
+			$result = false;
+		}
+	}
+
+	if ($result) {
+		removedir('./uploads/' . $_POST['uid']);
+		return array("stat" => "ok", "message" => "User " . $_POST['uid'] . " deleted.");
+	}
+	
+	return array("stat" => "fail", "message" => "User could not be deleted: " . $e->getMessage());
 }
 
 function checkUserToken($id, $token) {

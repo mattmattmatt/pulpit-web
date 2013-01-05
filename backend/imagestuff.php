@@ -1,5 +1,19 @@
 <?php
 
+# recursively remove a directory
+function removedir($dir) {
+	if(!is_dir($dir) && !is_file($dir)) {
+		return;
+	}
+     foreach(glob($dir . '/*') as $file) {
+         if(is_dir($file))
+             removedir($file);
+         else
+             unlink($file);
+     }
+     rmdir($dir);
+ }
+
 class SimpleImage {
 
 	var $image;
