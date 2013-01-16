@@ -1,11 +1,19 @@
 <html>
-	<head>
-		<title>{$dbresult.username|escape:'htmlall'}'s Quote on Pulpit</title>
-		<link rel="stylesheet" href="style/style.css" type="text/css" media="screen" charset="utf-8"/>
-	</head>
-	<body>
-		<h1>{$dbresult.content|escape:'htmlall'}</h1>
-		<img src="{$pathtoimg}" alt="" />
-		<h3>by {$dbresult.username|escape:'htmlall'}</h3>
-	</body>
+    <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns/fb# gopulpit: http://ogp.me/ns/fb/gopulpit#">
+        <title>{$dbresult.username|escape:'htmlall'}'s Quote On Pulpit</title>
+        <link rel="stylesheet" href="style/style.css" type="text/css" media="screen" charset="utf-8"/>
+
+        <meta property="fb:app_id"     content="514501168566195" />
+        <meta property="og:type"       content="gopulpit:quote" />
+        <meta property="og:url"        content="{$currenturl}" />
+        <meta property="og:title"      content="{$dbresult.content|escape:'htmlall'}" />
+        <meta property="og:description" content="A quote by {$dbresult.username|escape:'htmlall'} on Pulpit" />
+        <meta property="og:image"      content="{$pathtofbimg}" />
+        <meta property="gopulpit:author" content="{$dbresult.username|escape:'htmlall'}" /> 
+    </head>
+    <body>
+        <h1>{$dbresult.content|escape:'htmlall'}</h1>
+        <img src="{$pathtoimg}" alt="" />
+        <h3>by {$dbresult.username|escape:'htmlall'}</h3>
+    </body>
 </html>

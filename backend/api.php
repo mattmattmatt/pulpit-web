@@ -32,49 +32,51 @@ switch ($_POST['method']) {
 	case 'quote.create' :
 		sendResult(createQuoteApi());
 		break;
+	case 'quote.edit.delete' :
+		sendResult(deleteQuote());
+		break;
 	case 'quote.shared.fb' :
 		sendResult(saveSharedFb());
 		break;
 	case 'quotes.get.user' :
 		sendResult(getQuotesFromUser());
 		break;
-	default:
+	default :
 		noLuck();
 		return;
 }
-
 
 function fbUserApi($dontRegister) {
 	if (!isset($_POST['fbid']) or !isset($_POST['fbtoken'])) {
 		return array("stat" => "fail", "message" => "FB id, FB token and email must be provided");
 	}
 
-	$dbresult = dbQueryRow('SELECT username, id, fbid FROM users WHERE fbid = ?', array($_POST['fbid']));
+	$dbresult = dbQueryRow('SELECT username, id, fbid, settings FROM users WHERE fbid = ?', array($_POST['fbid']));
 	if (!$dbresult && $dontRegister) {
 		return array("stat" => "fail", "message" => "Facebook user not registered for Pulpit.");
 	}
-	
+
 	$fbtoken = verifyFbToken($_POST['fbtoken']);
 	if (!$fbtoken) {
 		return array("stat" => "fail", "message" => "Could not verify Facebook user with Facebook.");
 	}
-	
+
 	if (!is_array($dbresult)) {
 		return registerFbUser($fbtoken);
 	} else {
-		return loginFbUser($dbresult['id'], $dbresult['username'], $fbtoken);
+		return loginFbUser($dbresult['id'], $dbresult['username'], $fbtoken, $dbresult['settings']);
 	}
 }
 
 function registerFbUser($fbtoken) {
 	$fbUserResult = json_decode(file_get_contents("https://graph.facebook.com/me?access_token=" . $fbtoken));
-	$username = $fbUserResult->name;
+	$username = $fbUserResult -> name;
 	$statement = "
 				INSERT INTO users 
 				(email, username, fbtoken, fbid) VALUES
 				(?, ?, ?, ?)
 			";
-	$arr = array($fbUserResult->email, $username, $fbtoken, $_POST['fbid']);
+	$arr = array($fbUserResult -> email, $username, $fbtoken, $_POST['fbid']);
 	try {
 		$result = dbExec($statement, $arr);
 	} catch (Exception $e) {
@@ -84,8 +86,8 @@ function registerFbUser($fbtoken) {
 
 	if ($result !== FALSE) {
 		$logInResult = loginFbUser($uid, $username, $fbtoken);
-		if ($logInResult->stat === "ok") {
-			return array("stat" => "ok", "message" => "User " . $username . " registered", "username" => $username, "fbtoken" => $fbtoken, "uid" => $uid, "token" => $pulpittoken);
+		if ($logInResult -> stat === "ok") {
+			return array("stat" => "ok", "message" => "User " . $username . " registered", "username" => $username, "settings" => $logInResult->settings, "fbtoken" => $fbtoken, "uid" => $uid, "token" => $pulpittoken);
 		} else {
 			return $logInResult;
 		}
@@ -94,7 +96,7 @@ function registerFbUser($fbtoken) {
 	}
 }
 
-function loginFbUser($uid, $username, $fbtoken) {
+function loginFbUser($uid, $username, $fbtoken, $settings = "") {
 	$pulpittoken = md5(time() . $fbtoken . $_POST['fbid']);
 	$statement = "
 			UPDATE users 
@@ -106,22 +108,21 @@ function loginFbUser($uid, $username, $fbtoken) {
 		$result = dbExec($statement, $arr);
 	} catch (Exception $e) {
 		$result = false;
-		return array("stat" => "fail", "message" => "Facebook login failed: " . $e->getMessage());
+		return array("stat" => "fail", "message" => "Facebook login failed: " . $e -> getMessage());
 	}
-	
+
 	session_id(md5(sha1($uid)));
 	session_start();
 	$_SESSION['sessionhash'] = sha1(md5($uid));
-	
-	return array("stat" => "ok", "message" => "Facebook login successful", "username" => $username, "uid" => $uid, "fbtoken" => $fbtoken, "fbid" => $_POST['fbid'], "token" => $pulpittoken);
+
+	return array("stat" => "ok", "message" => "Facebook login successful", "username" => $username, "uid" => $uid, "settings" => $settings, "fbtoken" => $fbtoken, "fbid" => $_POST['fbid'], "token" => $pulpittoken);
 }
 
 function verifyFbToken($token) {
-	$token_url = "https://graph.facebook.com/oauth/access_token?grant_type=fb_exchange_token&"
-       . "client_id=514501168566195&client_secret=c89f7623a498ce1a7e76087759011fad&fb_exchange_token=" . $token;
-    $response = file_get_contents($token_url);
+	$token_url = "https://graph.facebook.com/oauth/access_token?grant_type=fb_exchange_token&" . "client_id=514501168566195&client_secret=c89f7623a498ce1a7e76087759011fad&fb_exchange_token=" . $token;
+	$response = file_get_contents($token_url);
 	$params = null;
-    parse_str($response, $params);
+	parse_str($response, $params);
 	if ($params['access_token'] AND $params['expires'] > 0) {
 		return $params['access_token'];
 	} else {
@@ -129,16 +130,15 @@ function verifyFbToken($token) {
 	}
 }
 
-
 function saveSharedFb() {
 	if (!isset($_POST['uid']) or !isset($_POST['postid']) or !isset($_POST['photoid']) or !isset($_POST['qid'])) {
 		return array("stat" => "fail", "message" => "Uid, postid, photoid and qid must be provided");
 	}
-	
+
 	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
 		return array("stat" => "fail", "message" => "Token or session hash invalid");
 	}
-	
+
 	$statement = "
 				INSERT INTO fbposts
 				(qid, photoid, postid) VALUES
@@ -151,7 +151,6 @@ function saveSharedFb() {
 		$result = false;
 	}
 
-
 	if ($result) {
 		return array("stat" => "ok", "message" => "Quote share on FB saved in db.");
 	} else {
@@ -159,12 +158,11 @@ function saveSharedFb() {
 	}
 }
 
-
 function createQuoteApi() {
 	if (!isset($_POST['image']) or !isset($_POST['uid']) or !isset($_POST['template']) or !isset($_POST['content']) or !isset($_POST['token'])) {
 		return array("stat" => "fail", "message" => "Image, uid, token, template and content string must be provided");
 	}
-	
+
 	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
 		return array("stat" => "fail", "message" => "Token or session hash invalid");
 	}
@@ -175,7 +173,7 @@ function createQuoteApi() {
 	$decodedData = base64_decode($encodedData);
 
 	preg_match('/^data:image\/(.*?);/i', $data, $matches);
-	
+
 	$path = 'backend/uploads/' . $_POST['uid'] . '/';
 	if (!is_dir(ROOTLOCAL . $path)) {
 		mkdir(ROOTLOCAL . $path, 0775);
@@ -191,24 +189,24 @@ function createQuoteApi() {
 	if ($result === false) {
 		return array("stat" => "fail", "message" => "Quote could not be saved.");
 	}
-	
+
 	$image = new SimpleImage();
-	$image->load(ROOTLOCAL . $path . $filename);
-	$originalWidth = $image->getWidth();
-	$originalHeight = $image->getHeight();
-	
+	$image -> load(ROOTLOCAL . $path . $filename);
+	$originalWidth = $image -> getWidth();
+	$originalHeight = $image -> getHeight();
+
 	// maximum Facebook wall post width
-	$image->resizeToWidth(403);
-	
+	$image -> resizeToWidth(403);
+
 	$fbfilename = $_POST['template'] . '-' . time() . '-fb' . '.' . $extension;
-	$image->save(ROOTLOCAL . $path . $fbfilename, IMAGETYPE_PNG);
+	$image -> save(ROOTLOCAL . $path . $fbfilename, IMAGETYPE_PNG);
 
 	$statement = "
 				INSERT INTO quotes 
 				(uid, template, path, content, width, height, fbpath, fbwidth, fbheight) VALUES
 				(?, ?, ?, ?, ?, ?, ?, ?, ?)
 			";
-	$arr = array($_POST['uid'], $_POST['template'], $path . $filename, $_POST['content'], $originalWidth, $originalHeight, $path . $fbfilename, $image->getWidth(), $image->getHeight());
+	$arr = array($_POST['uid'], $_POST['template'], $path . $filename, $_POST['content'], $originalWidth, $originalHeight, $path . $fbfilename, $image -> getWidth(), $image -> getHeight());
 	try {
 		$result = dbExec($statement, $arr);
 	} catch (Exception $e) {
@@ -226,11 +224,11 @@ function getQuotesFromUser() {
 	if (!isset($_POST['ownerid']) or $_POST['ownerid'] !== $_POST['uid']) {
 		return array("stat" => "fail", "message" => "Ownerid must be provided and identical with logged in user.");
 	}
-	
+
 	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
 		return array("stat" => "fail", "message" => "Token or session hash invalid");
 	}
-	
+
 	$result = dbQueryAll('SELECT * FROM quotes WHERE uid = ?', array($_POST['ownerid']));
 
 	if ($result) {
@@ -241,20 +239,25 @@ function getQuotesFromUser() {
 }
 
 function updateUser() {
-	if (!isset($_POST['username'])) {
-		return array("stat" => "fail", "message" => "Username must be provided.");
+	if (!isset($_POST['username']) and !isset($_POST['settings'])) {
+		return array("stat" => "fail", "message" => "Username or settings must be provided.");
 	}
-	
+
 	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
 		return array("stat" => "fail", "message" => "Token or session hash invalid");
 	}
-	
+
 	try {
-		$result = dbExec("UPDATE users SET username = ? WHERE id = ?", array(strip_tags($_POST['username']), $_POST['uid']));
+		if (isset($_POST['username'])) {
+			$result = dbExec("UPDATE users SET username = ? WHERE id = ?", array(strip_tags($_POST['username']), $_POST['uid']));
+		}
+		if (isset($_POST['settings'])) {
+			$result = dbExec("UPDATE users SET settings = ? WHERE id = ?", array($_POST['settings'], $_POST['uid']));
+		}
 	} catch (Exception $e) {
-		return array("stat" => "fail", "message" => "Could not update user: " . $e->getMessage());
+		return array("stat" => "fail", "message" => "Could not update user: " . $e -> getMessage());
 	}
-	
+
 	return array("stat" => "ok", "message" => "User update successful", "username" => strip_tags($_POST['username']));
 }
 
@@ -262,11 +265,11 @@ function deleteUser() {
 	if (!isset($_POST['uid'])) {
 		return array("stat" => "fail", "message" => "Ownerid must be provided and identical with logged in user.");
 	}
-	
+
 	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
 		return array("stat" => "fail", "message" => "Token or session hash invalid");
 	}
-	
+
 	try {
 		$result = dbExec("DELETE FROM users WHERE id = ?", array($_POST['uid']));
 	} catch (Exception $e) {
@@ -284,8 +287,40 @@ function deleteUser() {
 		removedir('./uploads/' . $_POST['uid']);
 		return array("stat" => "ok", "message" => "User " . $_POST['uid'] . " deleted.");
 	}
-	
-	return array("stat" => "fail", "message" => "User could not be deleted: " . $e->getMessage());
+
+	return array("stat" => "fail", "message" => "User could not be deleted: " . $e -> getMessage());
+}
+
+function deleteQuote() {
+	if (!isset($_POST['qid'])) {
+		return array("stat" => "fail", "message" => "Quote id must be provided and identical with logged in user.");
+	}
+
+	if (!checkUserToken($_POST['uid'], $_POST['token']) or !checkUserSession($_POST['uid'])) {
+		return array("stat" => "fail", "message" => "Token or session hash invalid");
+	}
+
+	try {
+		$quote = dbQueryRow('SELECT * FROM quotes WHERE id = ?', array($_POST['qid']));
+		$result = dbExec("DELETE FROM quotes WHERE id = ?", array($_POST['qid']));
+	} catch (Exception $e) {
+		$result = false;
+	}
+
+	if ($result) {
+		try {
+			unlink(str_replace('backend/', '', $quote['path']));
+			unlink(str_replace('backend/', '', $quote['fbpath']));
+		} catch (Exception $e) {
+			$result = false;
+		}
+	}
+
+	if ($result) {
+		return array("stat" => "ok", "message" => "Quote " . $_POST['qid'] . " deleted.");
+	}
+
+	return array("stat" => "fail", "message" => "Quote could not be deleted: " . $e -> getMessage());
 }
 
 function checkUserToken($id, $token) {
@@ -300,7 +335,7 @@ function checkUserSession($id) {
 	} else {
 		return true;
 	}
-	
+
 }
 
 function sendResult($object, $callbackname = false) {
@@ -310,6 +345,3 @@ function sendResult($object, $callbackname = false) {
 		echo json_encode($object);
 	}
 }
-
-
-
